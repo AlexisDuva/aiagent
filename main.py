@@ -1,52 +1,49 @@
 import os
 import argparse
-import json
+from pprint import pformat
+
 from dotenv import load_dotenv
 from openai import OpenAI
+
+import console
 from prompts import system_prompt
-from functions.call_function import available_functions,call_function
+from functions.call_function import available_functions, call_function
 
-def main() -> None:
+MAX_CALLS = 5
+MODEL = "openrouter/free"
 
-    max_nb_calls = 5
 
+def main() -> int:
     load_dotenv()
     api_key = os.environ.get("OPENROUTER_API_KEY")
-
     if api_key is None:
         raise RuntimeError(
             "OPENROUTER_API_KEY is not set. Add it to your environment or a .env file."
         )
-
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key,
-    )
 
     parser = argparse.ArgumentParser(description="Chatbot")
     parser.add_argument("user_prompt", type=str, help="User prompt")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
 
+    console.set_verbose(args.verbose)
+
+    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": args.user_prompt},
     ]
 
-    if args.verbose :
-            print(f"User prompt: {args.user_prompt}")
+    console.detail(f"User prompt: {args.user_prompt}")
 
-    for i in range(max_nb_calls):
-
-        if args.verbose :
-            print(f"*********************** Call number : {i} ***********************")
-            print(f"----------------- Messages to send to the model: -----------------")
-            print(f"{messages}")
-            print(f"------------------------------------------------------------------")
-
+    for i in range(MAX_CALLS):
+        console.detail(f"\n=== Call {i + 1}/{MAX_CALLS} ===")
+        console.detail("Messages sent to the model:")
+        console.detail(pformat(messages))
 
         response = client.chat.completions.create(
-            model="openrouter/free",
+            model=MODEL,
             messages=messages,
             temperature=0,
             tools=available_functions,
@@ -57,35 +54,30 @@ def main() -> None:
                 "The API response is missing usage data, which likely indicates a failed request."
             )
 
-        # if args.verbose :
-        #     print(f"Prompt tokens: {response.usage.prompt_tokens}")
-        #     print(f"Response tokens: {response.usage.completion_tokens}")
+        console.detail(
+            f"Tokens: {response.usage.prompt_tokens} prompt, "
+            f"{response.usage.completion_tokens} response"
+        )
 
         message = response.choices[0].message
         messages.append(message)
+
+        console.detail("Model message:")
+        console.detail(pformat(message))
+
         tool_calls = message.tool_calls
-        print(f"----------------- Response from the model {i} -----------------")
-        print(f"----------------- Message -----------------")
-        print(f"{message}")
-        print(f"----------------- Tool list -----------------")
-        if tool_calls :
-            for tool_call in tool_calls:
-                print(f"{tool_call.function.name}")
-        if tool_calls :
-            print(f"----------------- Tool calls  -----------------")
-            for tool_call in tool_calls:
-                print(f"Call : {tool_call.function.name}")
-                call_result = call_function(tool_call, args.verbose)
-                messages.append(call_result)
-                print(f"Results :")
-                print(f"{call_result['content']}")
-        else:
-            print("No tools called. Final response:")
-            print(response.choices[0].message.content)
+        if not tool_calls:
+            console.info(message.content or "")
             return 0
-    print(f"Max number of calls reached : {max_nb_calls}")
+
+        for tool_call in tool_calls:
+            result = call_function(tool_call)
+            messages.append(result)
+            console.detail(f"   -> {result['content']}")
+
+    console.info(f"Reached the maximum of {MAX_CALLS} calls without a final answer.")
     return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
